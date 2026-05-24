@@ -1,5 +1,5 @@
-import { FavoritesService } from '../src/services/FavoritesService';
-import { Location, LocationData } from '../src/models/Location';
+import { FavoritesService } from '../services/FavoritesService';
+import { Location, LocationData } from '../models/Location';
 
 // Mock localStorage
 const localStorageMock = (() => {
