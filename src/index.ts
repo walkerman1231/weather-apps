@@ -4,7 +4,7 @@
 
 import { Weather, ForecastItem } from './models/Weather';
 import { Location } from './models/Location';
-import { Notification, NotificationCondition, NotificationType } from './models/Notification';
+import { NotificationCondition, NotificationType } from './models/Notification';
 import { WeatherService } from './services/WeatherService';
 import { FavoritesService } from './services/FavoritesService';
 import { NotificationService, NotificationMessage } from './services/NotificationService';
@@ -18,7 +18,6 @@ let favoritesService: FavoritesService;
 let notificationService: NotificationService;
 
 let currentWeather: Weather | null = null;
-let currentLocation: Location | null = null;
 
 /**
  * Initialize the application
@@ -126,8 +125,6 @@ async function handleSearch(event: Event): Promise<void> {
  */
 async function handleLocationSelect(location: Location): Promise<void> {
   try {
-    currentLocation = location;
-
     // Fetch current weather
     const weatherResponse = await weatherService.getCurrentWeather(location);
     if (!weatherResponse.success || !weatherResponse.data) {
@@ -549,7 +546,7 @@ async function handleAddNotification(event: Event): Promise<void> {
     condition.value = conditionSelect.value;
   }
 
-  const notification = notificationService.createNotification({
+  notificationService.createNotification({
     id: `notif_${Date.now()}`,
     locationId,
     locationName: location.getFullName(),
