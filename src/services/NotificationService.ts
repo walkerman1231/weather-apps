@@ -1,46 +1,55 @@
-import { Notification, NotificationData, NotificationType } from '../models/Notification';
+import { Notification, NotificationData } from '../models/Notification';
 import { Weather } from '../models/Weather';
+
+export interface NotificationMessage {
+  id: string;
+  locationName: string;
+  message: string;
+  timestamp: number;
+}
+
+type NotificationCallback = (message: NotificationMessage) => void;
 
 export class NotificationService {
   private notifications: Map<string, Notification> = new Map();
-  private storageKey: string = 'weather_notifications';
-  private initialized: boolean = false;
+  private storageKey: string = 'weatherapp_notifications';
+  private subscribers: NotificationCallback[] = [];
 
-  initialize(): void {
-    if (this.initialized) {
-      return;
-    }
+  constructor() {
     this.loadFromStorage();
-    this.initialized = true;
   }
 
-  createNotification(data: NotificationData): Notification {
-    this.ensureInitialized();
+  public createNotification(data: NotificationData): Notification {
     const notification = new Notification(data);
     this.notifications.set(notification.id, notification);
     this.saveToStorage();
     return notification;
   }
 
-  getNotifications(): Notification[] {
-    this.ensureInitialized();
+  public getNotification(id: string): Notification | undefined {
+    return this.notifications.get(id);
+  }
+
+  public getAllNotifications(): Notification[] {
     return Array.from(this.notifications.values());
   }
 
-  getNotificationsByLocation(locationName: string): Notification[] {
-    this.ensureInitialized();
+  public getNotificationsForLocation(locationId: string): Notification[] {
     return Array.from(this.notifications.values()).filter(
-      (n) => n.locationName === locationName
+      (n) => n.locationId === locationId
     );
   }
 
-  getNotificationById(id: string): Notification | null {
-    this.ensureInitialized();
-    return this.notifications.get(id) || null;
+  public updateNotification(notification: Notification): boolean {
+    if (!this.notifications.has(notification.id)) {
+      return false;
+    }
+    this.notifications.set(notification.id, notification);
+    this.saveToStorage();
+    return true;
   }
 
-  deleteNotification(id: string): boolean {
-    this.ensureInitialized();
+  public removeNotification(id: string): boolean {
     const result = this.notifications.delete(id);
     if (result) {
       this.saveToStorage();
@@ -48,79 +57,77 @@ export class NotificationService {
     return result;
   }
 
-  toggleNotification(id: string): Notification | null {
-    this.ensureInitialized();
-    const notification = this.notifications.get(id);
-    if (notification) {
-      notification.toggle();
-      this.saveToStorage();
-      return notification;
-    }
-    return null;
-  }
+  public checkAndNotify(locationId: string, weather: Weather): void {
+    const notifications = this.getNotificationsForLocation(locationId);
 
-  checkNotifications(locationName: string, weather: Weather): Notification[] {
-    this.ensureInitialized();
-    const triggered: Notification[] = [];
-    const notifications = this.getNotificationsByLocation(locationName);
-
-    for (const notification of notifications) {
+    notifications.forEach((notification) => {
       if (!notification.enabled) {
-        continue;
+        return;
       }
 
-      let shouldTrigger = false;
+      notification.conditions.forEach((condition) => {
+        let shouldTrigger = false;
 
-      switch (notification.type) {
-        case NotificationType.TEMPERATURE_ABOVE:
-        case NotificationType.TEMPERATURE_BELOW:
-        case NotificationType.TEMPERATURE_EQUAL:
-          shouldTrigger = notification.shouldTrigger(weather.temperature);
-          break;
-        case NotificationType.HUMIDITY_ABOVE:
-        case NotificationType.HUMIDITY_BELOW:
-        case NotificationType.HUMIDITY_EQUAL:
-          shouldTrigger = notification.shouldTrigger(weather.humidity);
-          break;
-        case NotificationType.WIND_SPEED_ABOVE:
-        case NotificationType.WIND_SPEED_BELOW:
-          shouldTrigger = notification.shouldTrigger(weather.windSpeed);
-          break;
-        case NotificationType.CONDITION_MATCH:
-          shouldTrigger = notification.matchesCondition(weather.condition);
-          break;
-      }
+        switch (condition.type) {
+          case 'temperature':
+            shouldTrigger = notification.shouldTrigger(
+              'temperature',
+              weather.temperature
+            );
+            break;
+          case 'humidity':
+            shouldTrigger = notification.shouldTrigger(
+              'humidity',
+              weather.humidity
+            );
+            break;
+          case 'windSpeed':
+            shouldTrigger = notification.shouldTrigger(
+              'windSpeed',
+              weather.windSpeed
+            );
+            break;
+          case 'weatherCondition':
+            shouldTrigger = notification.shouldTrigger(
+              'weatherCondition',
+              weather.description
+            );
+            break;
+        }
 
-      if (shouldTrigger) {
-        notification.recordTrigger();
-        triggered.push(notification);
-        this.saveToStorage();
-      }
-    }
-
-    return triggered;
+        if (shouldTrigger) {
+          this.notify({
+            id: notification.id,
+            locationName: notification.locationName,
+            message: `Weather alert: ${condition.type} changed for ${notification.locationName}`,
+            timestamp: Date.now()
+          });
+        }
+      });
+    });
   }
 
-  clearAllNotifications(): number {
-    this.ensureInitialized();
-    const count = this.notifications.size;
-    this.notifications.clear();
-    this.saveToStorage();
-    return count;
+  public subscribe(callback: NotificationCallback): void {
+    this.subscribers.push(callback);
+  }
+
+  public unsubscribe(callback: NotificationCallback): void {
+    this.subscribers = this.subscribers.filter((cb) => cb !== callback);
+  }
+
+  private notify(message: NotificationMessage): void {
+    this.subscribers.forEach((callback) => callback(message));
   }
 
   private saveToStorage(): void {
     try {
       const data = Array.from(this.notifications.values()).map((n) => ({
         id: n.id,
+        locationId: n.locationId,
         locationName: n.locationName,
-        type: n.type,
-        threshold: n.threshold,
-        condition: n.condition,
+        conditions: n.conditions,
         enabled: n.enabled,
-        createdAt: n.createdAt,
-        lastTriggeredAt: n.lastTriggeredAt,
-        triggerCount: n.triggerCount
+        createdAt: n.createdAt
       }));
       localStorage.setItem(this.storageKey, JSON.stringify(data));
     } catch (error) {
@@ -133,31 +140,16 @@ export class NotificationService {
       const data = localStorage.getItem(this.storageKey);
       if (data) {
         const parsed = JSON.parse(data);
-        this.notifications.clear();
-        for (const item of parsed) {
-          const notification = new Notification({
-            id: item.id,
-            locationName: item.locationName,
-            type: item.type,
-            threshold: item.threshold,
-            condition: item.condition,
-            enabled: item.enabled,
-            createdAt: item.createdAt,
-            lastTriggeredAt: item.lastTriggeredAt,
-            triggerCount: item.triggerCount
+        if (Array.isArray(parsed)) {
+          parsed.forEach((item) => {
+            const notification = new Notification(item);
+            this.notifications.set(notification.id, notification);
           });
-          this.notifications.set(notification.id, notification);
         }
       }
     } catch (error) {
       console.error('Failed to load notifications:', error);
       this.notifications.clear();
-    }
-  }
-
-  private ensureInitialized(): void {
-    if (!this.initialized) {
-      this.initialize();
     }
   }
 }
